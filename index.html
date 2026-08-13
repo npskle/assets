@@ -39,13 +39,11 @@
 <script>
 (function(){
   "use strict";
-  // ===== 由后台「发布页抗屏蔽中心」自动填充，勿手改 =====
   var FILE_SOURCES = ["https://cdn.jsdelivr.net/gh/npskle/assets@main/d.txt","https://fastly.jsdelivr.net/gh/npskle/assets@main/d.txt","https://gcore.jsdelivr.net/gh/npskle/assets@main/d.txt","https://cdn.statically.io/gh/npskle/assets/main/d.txt","https://cdn.statically.io/gl/kle-group3/assets/main/d.txt"];
   var DOH_TXT = [];
   var KEY_HEX = "7127fe3cb8ef5bea708306ee7ae109f3c121aad09590f27e3bcdc07e1b255b54";
   var PROBE_PATH = "/probe.png";
   var PROBE_TIMEOUT = 4000, SOURCE_TIMEOUT = 6000;
-  // ===== 填充结束 =====
 
   var loadingEl=document.getElementById("loading"), errorEl=document.getElementById("error"),
       tipEl=document.getElementById("tip"), emsgEl=document.getElementById("emsg"), wxEl=document.getElementById("wx");
