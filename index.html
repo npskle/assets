@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>正在打开…</title>
+<style>
+  html,body{height:100%;margin:0}
+  body{display:flex;align-items:center;justify-content:center;background:#0f1115;color:#c8ccd4;
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  .box{text-align:center;padding:24px;max-width:340px}
+  .sp{width:34px;height:34px;margin:0 auto 16px;border:3px solid #2a2f3a;border-top-color:#7aa2ff;
+      border-radius:50%;animation:r .8s linear infinite}
+  @keyframes r{to{transform:rotate(360deg)}}
+  .t{font-size:15px;line-height:1.7}
+  .s{font-size:12.5px;color:#7b8291;margin-top:8px}
+  .err{display:none}
+  .wx{display:none;font-size:14px;line-height:1.8}
+  .wx b{color:#ffcf5c}
+  a{color:#7aa2ff;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="box">
+  <div id="loading">
+    <div class="sp"></div>
+    <div class="t">正在为你打开，请稍候…</div>
+    <div class="s" id="tip">正在选择最快线路</div>
+  </div>
+  <div class="err" id="error">
+    <div class="t">暂时打不开 😥</div>
+    <div class="s" id="emsg">请稍后重试，或用手机浏览器重新打开本链接。</div>
+  </div>
+  <div class="wx" id="wx">
+    请点右上角 <b>「···」</b> → 选择 <b>「在浏览器打开」</b><br>再继续下载。
+  </div>
+</div>
+<script>
+(function(){
+  "use strict";
+  // ===== 由后台「发布页抗屏蔽中心」自动填充，勿手改 =====
+  var FILE_SOURCES = ["https://cdn.jsdelivr.net/gh/npskle/assets@main/d.txt","https://fastly.jsdelivr.net/gh/npskle/assets@main/d.txt","https://gcore.jsdelivr.net/gh/npskle/assets@main/d.txt","https://cdn.statically.io/gh/npskle/assets/main/d.txt","https://cdn.statically.io/gl/kle-group3/assets/main/d.txt"];
+  var DOH_TXT = [];
+  var KEY_HEX = "7127fe3cb8ef5bea708306ee7ae109f3c121aad09590f27e3bcdc07e1b255b54";
+  var PROBE_PATH = "/probe.png";
+  var PROBE_TIMEOUT = 4000, SOURCE_TIMEOUT = 6000;
+  // ===== 填充结束 =====
+
+  var loadingEl=document.getElementById("loading"), errorEl=document.getElementById("error"),
+      tipEl=document.getElementById("tip"), emsgEl=document.getElementById("emsg"), wxEl=document.getElementById("wx");
+  function isWeChat(){ return /MicroMessenger/i.test(navigator.userAgent||""); }
+  function toUrl(d){ d=String(d||"").replace(/\s+/g,""); if(!/^https?:\/\//i.test(d)) d="https://"+d; return d.replace(/\/+$/,""); }
+  function redirect(domain){ location.replace(toUrl(domain)+location.pathname+location.search+location.hash); }
+  function showErr(msg){ loadingEl.style.display="none"; errorEl.style.display="block"; if(msg) emsgEl.textContent=msg; }
+  function withTimeout(p,ms){ return new Promise(function(res,rej){ var t=setTimeout(function(){rej(new Error("timeout"));},ms);
+      p.then(function(v){clearTimeout(t);res(v);},function(e){clearTimeout(t);rej(e);}); }); }
+  function hexToBytes(h){ var a=new Uint8Array(h.length/2); for(var i=0;i<a.length;i++) a[i]=parseInt(h.substr(i*2,2),16); return a; }
+  function b64ToBytes(s){ s=s.replace(/\s+/g,""); var bin=atob(s), a=new Uint8Array(bin.length); for(var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a; }
+  function decrypt(b64){
+    var raw=b64ToBytes(b64); if(raw.length<28) return Promise.reject(new Error("short"));
+    var iv=raw.slice(0,12), data=raw.slice(12);
+    return crypto.subtle.importKey("raw",hexToBytes(KEY_HEX),{name:"AES-GCM"},false,["decrypt"])
+      .then(function(k){ return crypto.subtle.decrypt({name:"AES-GCM",iv:iv},k,data); })
+      .then(function(buf){ return JSON.parse(new TextDecoder().decode(buf)); });
+  }
+  function fromFile(url){
+    return withTimeout(fetch(url,{cache:"no-store"}).then(function(r){ if(!r.ok) throw new Error("http"); return r.text(); })
+      .then(decrypt).then(pickDomains), SOURCE_TIMEOUT);
+  }
+  function fromDoh(url){
+    return withTimeout(fetch(url,{headers:{accept:"application/dns-json"},cache:"no-store"}).then(function(r){return r.json();})
+      .then(function(j){
+        var ans=(j&&j.Answer)||[], parts={};
+        for(var i=0;i<ans.length;i++){ var t=String(ans[i].data||"").replace(/^"|"$/g,"");
+          var kv={}; t.split(";").forEach(function(x){ var p=x.split("="); if(p.length===2) kv[p[0]]=p[1]; });
+          if(kv.d!==undefined) parts[parseInt(kv.i||"0",10)]=kv.d; }
+        var keys=Object.keys(parts).sort(function(a,b){return a-b;}), b64="";
+        for(var k=0;k<keys.length;k++) b64+=parts[keys[k]];
+        if(!b64) throw new Error("no-txt"); return decrypt(b64);
+      }).then(pickDomains), SOURCE_TIMEOUT);
+  }
+  function pickDomains(j){
+    if(!j) throw new Error("empty");
+    var list = j.dl || j.domestic || j.overseas || [];
+    var out=[], seen={};
+    for(var i=0;i<list.length;i++){ var d=String(list[i]||"").replace(/\s+/g,""); if(d&&!seen[d]){seen[d]=1;out.push(d);} }
+    if(!out.length) throw new Error("no-domain");
+    return out;
+  }
+  function probe(domain){
+    return new Promise(function(res,rej){
+      var img=new Image(), done=false;
+      var t=setTimeout(function(){ if(!done){done=true;img.src="";rej();} },PROBE_TIMEOUT);
+      img.onload=function(){ if(!done){done=true;clearTimeout(t);res(domain);} };
+      img.onerror=function(){ if(!done){done=true;clearTimeout(t);rej();} };
+      img.src=toUrl(domain)+PROBE_PATH+"?_="+Date.now();
+    });
+  }
+  function anyOf(promises){
+    return new Promise(function(res,rej){
+      var left=promises.length, ok=false; if(!left) return rej();
+      promises.forEach(function(p){ Promise.resolve(p).then(function(v){ if(!ok){ok=true;res(v);} },
+        function(){ if(--left===0&&!ok) rej(); }); });
+    });
+  }
+  function run(){
+    if(isWeChat()){ loadingEl.style.display="none"; wxEl.style.display="block"; return; }
+    if(!(window.crypto&&crypto.subtle&&window.fetch)){ showErr("请用手机自带浏览器打开本链接。"); return; }
+    var discovers=FILE_SOURCES.map(fromFile).concat(DOH_TXT.map(fromDoh));
+    anyOf(discovers).then(function(domains){
+      tipEl.textContent="正在选择最快线路…";
+      anyOf(domains.map(probe)).then(function(best){ redirect(best); }, function(){ redirect(domains[0]); });
+    }, function(){ showErr("线路都在维护中，请稍后重试，或用浏览器重新打开本链接。"); });
+    setTimeout(function(){ if(loadingEl.style.display!=="none"&&wxEl.style.display!=="block") showErr(); }, 15000);
+  }
+  run();
+})();
+</script>
+</body>
+</html>
