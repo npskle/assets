@@ -102,11 +102,26 @@
         function(){ if(--left===0&&!ok) rej(); }); });
     });
   }
+  // 合并所有发现源的域名(取并集,去重)——不能只用「最先返回的那个源」:CDN 会缓存旧发现源,
+  // 缓存的老版本(域名少)往往返回更快、把新加的域名盖掉。取并集则只要有一个新鲜源(如阿里 DoH
+  // 每 10 分钟刷新)包含新域名,新域名就一定进池。capMs 内收齐多少算多少,不等挂死的慢源。
+  function unionOf(promises, capMs){
+    return new Promise(function(res,rej){
+      var seen={}, out=[], settled=0, done=false;
+      function finish(){ if(done) return; done=true; out.length?res(out):rej(); }
+      if(!promises.length) return rej();
+      var cap=setTimeout(finish, capMs);
+      promises.forEach(function(p){ Promise.resolve(p).then(function(list){
+        for(var i=0;i<(list||[]).length;i++){ var d=list[i]; if(d&&!seen[d]){seen[d]=1;out.push(d);} }
+        if(++settled===promises.length){ clearTimeout(cap); finish(); }
+      }, function(){ if(++settled===promises.length){ clearTimeout(cap); finish(); } }); });
+    });
+  }
   function run(){
     if(isWeChat()){ loadingEl.style.display="none"; wxEl.style.display="block"; return; }
     if(!(window.crypto&&crypto.subtle&&window.fetch)){ showErr("请用手机自带浏览器打开本链接。"); return; }
     var discovers=FILE_SOURCES.map(fromFile).concat(DOH_TXT.map(fromDoh));
-    anyOf(discovers).then(function(domains){
+    unionOf(discovers, 3500).then(function(domains){
       tipEl.textContent="正在选择最快线路…";
       anyOf(domains.map(probe)).then(function(best){ redirect(best); }, function(){ redirect(domains[0]); });
     }, function(){ showErr("线路都在维护中，请稍后重试，或用浏览器重新打开本链接。"); });
