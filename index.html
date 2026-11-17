@@ -47,7 +47,7 @@
 <script>
 (function(){
   "use strict";
-  var FILE_SOURCES = ["https://cdn.jsdelivr.net/gh/npskle/assets@9cf483040ea039e81be367792b59c55c850c598b/d.txt","https://fastly.jsdelivr.net/gh/npskle/assets@9cf483040ea039e81be367792b59c55c850c598b/d.txt","https://gcore.jsdelivr.net/gh/npskle/assets@9cf483040ea039e81be367792b59c55c850c598b/d.txt","https://cdn.statically.io/gh/npskle/assets@9cf483040ea039e81be367792b59c55c850c598b/d.txt","https://gitlab.com/api/v4/projects/kle-group3%2Fassets/repository/files/d.txt/raw?ref=main"];
+  var FILE_SOURCES = ["https://cdn.jsdelivr.net/gh/npskle/assets@d2fb6480ac4e4c04b0cef1b23a4ce56ba27b9dbe/d.txt","https://fastly.jsdelivr.net/gh/npskle/assets@d2fb6480ac4e4c04b0cef1b23a4ce56ba27b9dbe/d.txt","https://gcore.jsdelivr.net/gh/npskle/assets@d2fb6480ac4e4c04b0cef1b23a4ce56ba27b9dbe/d.txt","https://cdn.statically.io/gh/npskle/assets@d2fb6480ac4e4c04b0cef1b23a4ce56ba27b9dbe/d.txt","https://gitlab.com/api/v4/projects/kle-group3%2Fassets/repository/files/d.txt/raw?ref=main"];
   var DOH_TXT = ["https://dns.alidns.com/resolve?name=s.fbstudy.wiki\u0026type=TXT"];
   var KEY_HEX = "7127fe3cb8ef5bea708306ee7ae109f3c121aad09590f27e3bcdc07e1b255b54";
   var PROBE_PATH = "/probe.png";
@@ -102,6 +102,7 @@
     var out=[], seen={};
     for(var i=0;i<list.length;i++){ var d=String(list[i]||"").replace(/\s+/g,""); if(d&&!seen[d]){seen[d]=1;out.push(d);} }
     if(!out.length) throw new Error("no-domain");
+    out.ts=+j.ts||0; // 生成时间（秒），用来丢掉旧清单
     return out;
   }
   function probe(domain){
@@ -163,26 +164,37 @@
   }
   // 从后面的页面退回来（bfcache 恢复）时冻结的计时器会接着跑，不能再自动跳走，改为让用户选。
   window.addEventListener("pageshow",function(e){ if(e.persisted){ stopAuto(); showErr("可以手动选一条线路："); showLines(); } });
-  // 合并所有发现源的域名(取并集,去重)——不能只用「最先返回的那个源」:CDN 会缓存旧发现源,
-  // 缓存的老版本(域名少)往往返回更快、把新加的域名盖掉。取并集则只要有一个新鲜源(如阿里 DoH
-  // 每 10 分钟刷新)包含新域名,新域名就一定进池。capMs 内收齐多少算多少,不等挂死的慢源。
-  function unionOf(promises, capMs){
+  // 只用「最新」的清单（2026-11-17）：每份清单都带生成时间 ts，capMs 内收到的里只取 ts 最大的那几份
+  // 取并集。以前所有源无条件取并集：只能手动改的 DNS TXT 一旦没跟上，被换下的旧发布页（服务还活着、
+  // 探活能过，却已被 Google 标红）就混进候选，用户被随机带到红页。旧清单一律不参与。
+  function newestOf(promises, capMs){
     return new Promise(function(res,rej){
-      var seen={}, out=[], settled=0, done=false;
+      var best=-1, out=[], seen={}, settled=0, done=false;
       function finish(){ if(done) return; done=true; out.length?res(out):rej(); }
       if(!promises.length) return rej();
       var cap=setTimeout(finish, capMs);
+      function one(){ if(++settled===promises.length){ clearTimeout(cap); finish(); } }
       promises.forEach(function(p){ Promise.resolve(p).then(function(list){
-        for(var i=0;i<(list||[]).length;i++){ var d=list[i]; if(d&&!seen[d]){seen[d]=1;out.push(d);} }
-        if(++settled===promises.length){ clearTimeout(cap); finish(); }
-      }, function(){ if(++settled===promises.length){ clearTimeout(cap); finish(); } }); });
+        if(done||!list||!list.length){ one(); return; }
+        var ts=list.ts||0;
+        if(ts>best){ best=ts; out=[]; seen={}; }
+        if(ts===best){ for(var i=0;i<list.length;i++){ var d=list[i]; if(d&&!seen[d]){seen[d]=1;out.push(d);} } }
+        one();
+      }, one); });
     });
+  }
+  // 文件源（GitHub/jsDelivr 钉提交号、GitLab API）每次换域名都自动推送，是唯一可信来源；
+  // DNS TXT 只能手动改、常常落后，只在文件源全部拿不到时兜底。
+  function discover(){
+    var files=FILE_SOURCES.map(fromFile), txts=DOH_TXT.map(fromDoh); // 同时发出，兜底时 TXT 多半已到
+    return newestOf(files, 3500)
+      .catch(function(){ return newestOf(files, 2500); }) // 文件源慢：再多等一会儿
+      .catch(function(){ return newestOf(txts, 1500); });
   }
   function run(){
     if(isWeChat()){ loadingEl.style.display="none"; wxEl.style.display="block"; return; }
     if(!(window.crypto&&crypto.subtle&&window.fetch)){ showErr("请用手机自带浏览器打开本链接。"); return; }
-    var discovers=FILE_SOURCES.map(fromFile).concat(DOH_TXT.map(fromDoh));
-    unionOf(discovers, 3500).then(function(domains){
+    discover().then(function(domains){
       allDomains=domains;
       tipEl.textContent="正在选择最快线路…";
       tryNext(prober(domains));
