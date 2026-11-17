@@ -19,13 +19,6 @@
   .wx{display:none;font-size:14px;line-height:1.8}
   .wx b{color:#ffcf5c}
   a{color:#7aa2ff;text-decoration:none}
-  .lines{display:none;margin-top:18px;text-align:left}
-  .lines .lh{font-size:12.5px;color:#7b8291;margin-bottom:8px;text-align:center}
-  .lines a{display:block;padding:10px 14px;margin-top:8px;border-radius:10px;background:#1a1e27;
-           border:1px solid #2a2f3a;color:#c8ccd4;font-size:14px}
-  .lines a b{float:right;font-weight:normal;color:#7aa2ff}
-  .lines a.ok b{color:#5bd68a}
-  .lines .rt{text-align:center;background:none;border:0;color:#7aa2ff}
 </style>
 </head>
 <body>
@@ -39,7 +32,6 @@
     <div class="t">暂时打不开 😥</div>
     <div class="s" id="emsg">请稍后重试，或用手机浏览器重新打开本链接。</div>
   </div>
-  <div class="lines" id="lines"></div>
   <div class="wx" id="wx">
     请点右上角 <b>「···」</b> → 选择 <b>「在浏览器打开」</b><br>再继续下载。
   </div>
@@ -47,7 +39,7 @@
 <script>
 (function(){
   "use strict";
-  var FILE_SOURCES = ["https://cdn.jsdelivr.net/gh/npskle/assets@78d2673f1452ae96a468e78e232a31bcdf155a98/d.txt","https://fastly.jsdelivr.net/gh/npskle/assets@78d2673f1452ae96a468e78e232a31bcdf155a98/d.txt","https://gcore.jsdelivr.net/gh/npskle/assets@78d2673f1452ae96a468e78e232a31bcdf155a98/d.txt","https://cdn.statically.io/gh/npskle/assets@78d2673f1452ae96a468e78e232a31bcdf155a98/d.txt","https://gitlab.com/api/v4/projects/kle-group3%2Fassets/repository/files/d.txt/raw?ref=main"];
+  var FILE_SOURCES = ["https://cdn.jsdelivr.net/gh/npskle/assets@1c26ea4455e69e83fa0853fb297791eeca1e36ca/d.txt","https://fastly.jsdelivr.net/gh/npskle/assets@1c26ea4455e69e83fa0853fb297791eeca1e36ca/d.txt","https://gcore.jsdelivr.net/gh/npskle/assets@1c26ea4455e69e83fa0853fb297791eeca1e36ca/d.txt","https://cdn.statically.io/gh/npskle/assets@1c26ea4455e69e83fa0853fb297791eeca1e36ca/d.txt","https://gitlab.com/api/v4/projects/kle-group3%2Fassets/repository/files/d.txt/raw?ref=main"];
   var DOH_TXT = ["https://dns.alidns.com/resolve?name=s.fbstudy.wiki\u0026type=TXT"];
   var KEY_HEX = "7127fe3cb8ef5bea708306ee7ae109f3c121aad09590f27e3bcdc07e1b255b54";
   var PROBE_PATH = "/probe.png";
@@ -57,10 +49,8 @@
       tipEl=document.getElementById("tip"), emsgEl=document.getElementById("emsg"), wxEl=document.getElementById("wx");
   function isWeChat(){ return /MicroMessenger/i.test(navigator.userAgent||""); }
   function toUrl(d){ d=String(d||"").replace(/\s+/g,""); if(!/^https?:\/\//i.test(d)) d="https://"+d; return d.replace(/\/+$/,""); }
-  function target(domain){ return toUrl(domain)+location.pathname+location.search+location.hash; }
-  function redirect(domain){ location.replace(target(domain)); }
-  function onAttempt(n){ tipEl.textContent = n>1 ? "线路较慢，正在换一条…" : "正在打开…"; }
-  function showErr(msg){ stopAuto(); loadingEl.style.display="none"; errorEl.style.display="block"; if(msg) emsgEl.textContent=msg; }
+  function redirect(domain){ location.replace(toUrl(domain)+location.pathname+location.search+location.hash); }
+  function showErr(msg){ loadingEl.style.display="none"; errorEl.style.display="block"; if(msg) emsgEl.textContent=msg; }
   function withTimeout(p,ms){ return new Promise(function(res,rej){ var t=setTimeout(function(){rej(new Error("timeout"));},ms);
       p.then(function(v){clearTimeout(t);res(v);},function(e){clearTimeout(t);rej(e);}); }); }
   function hexToBytes(h){ var a=new Uint8Array(h.length/2); for(var i=0;i<a.length;i++) a[i]=parseInt(h.substr(i*2,2),16); return a; }
@@ -113,56 +103,13 @@
       img.src=toUrl(domain)+PROBE_PATH+"?_="+Date.now();
     });
   }
-  // —— 逐条尝试 + 跳转看门（2026-11-16）——
-  // 探活图通 ≠ 页面能打开：发布页域名的 DNS 会在几组节点 IP 间轮换，浏览器又按顶层站点分隔连接和
-  // DNS 缓存，入口页里探活连上的节点，真正跳过去时可能换成另一组连不上的节点（11-16 实测 jfcwtmyp.cc
-  // 探活 1 秒通，跳过去首页一直无响应，以前的入口页跳出去就不管了）。新页面响应之前本页脚本仍在跑，
-  // 所以跳出去后继续看门：NAV_TIMEOUT 内本页还在，就中止这次跳转、换下一条探活通过的域名；
-  // 全部用完就列出线路让用户手动选 —— 不再盲跳清单第一个。
-  var NAV_TIMEOUT = 7000, LINES_AFTER = 12000;
-  var tried={}, okSet={}, allDomains=[], navTimer=null, stopped=false, attempts=0;
-  function prober(domains){
-    var ok=[], left=domains.length, waiters=[];
-    function take(){ for(var i=0;i<ok.length;i++){ if(!tried[ok[i]]) return ok[i]; } return null; }
-    function flush(){
-      while(waiters.length){ var d=take();
-        if(d){ tried[d]=1; waiters.shift().res(d); } else if(left<=0){ waiters.shift().rej(); } else break; }
-    }
-    domains.forEach(function(d){ probe(d).then(function(){ okSet[d]=1; ok.push(d); left--; flush(); },
-      function(){ left--; flush(); }); });
-    return function(){ return new Promise(function(res,rej){ waiters.push({res:res,rej:rej}); flush(); }); };
-  }
-  function stopAuto(){ stopped=true; clearTimeout(navTimer); }
-  function tryNext(next){
-    next().then(function(d){
-      if(stopped) return;
-      attempts++; onAttempt(attempts);
-      redirect(d);
-      navTimer=setTimeout(function(){ if(stopped) return; try{ window.stop(); }catch(e){} tryNext(next); }, NAV_TIMEOUT);
-    }, function(){
-      if(stopped) return;
-      showErr(attempts ? "自动选的线路都没能打开，请手动选一条：" : "线路检测都没通过，可以手动选一条试试：");
-      showLines();
+  function anyOf(promises){
+    return new Promise(function(res,rej){
+      var left=promises.length, ok=false; if(!left) return rej();
+      promises.forEach(function(p){ Promise.resolve(p).then(function(v){ if(!ok){ok=true;res(v);} },
+        function(){ if(--left===0&&!ok) rej(); }); });
     });
   }
-  function showLines(){
-    if(!allDomains.length) return;
-    var box=document.getElementById("lines"); box.innerHTML="";
-    if(errorEl.style.display!=="block"){ // 报错时错误文案已经说了，不再重复
-      var h=document.createElement("div"); h.className="lh"; h.textContent="还没打开？可以手动选一条线路"; box.appendChild(h); }
-    var list=allDomains.filter(function(d){ return okSet[d]; }).concat(allDomains.filter(function(d){ return !okSet[d]; }));
-    list.forEach(function(d,i){
-      var a=document.createElement("a"); a.href=target(d); a.className=okSet[d]?"ok":"";
-      a.appendChild(document.createTextNode("线路 "+(i+1)));
-      var b=document.createElement("b"); b.textContent=okSet[d]?"检测可用":"检测未通过"; a.appendChild(b);
-      a.onclick=stopAuto;
-      box.appendChild(a);
-    });
-    var r=document.createElement("a"); r.className="rt"; r.href="javascript:location.reload()"; r.textContent="重新检测";
-    box.appendChild(r); box.style.display="block";
-  }
-  // 从后面的页面退回来（bfcache 恢复）时冻结的计时器会接着跑，不能再自动跳走，改为让用户选。
-  window.addEventListener("pageshow",function(e){ if(e.persisted){ stopAuto(); showErr("可以手动选一条线路："); showLines(); } });
   // 合并所有发现源的域名(取并集,去重)——不能只用「最先返回的那个源」:CDN 会缓存旧发现源,
   // 缓存的老版本(域名少)往往返回更快、把新加的域名盖掉。取并集则只要有一个新鲜源(如阿里 DoH
   // 每 10 分钟刷新)包含新域名,新域名就一定进池。capMs 内收齐多少算多少,不等挂死的慢源。
@@ -183,12 +130,10 @@
     if(!(window.crypto&&crypto.subtle&&window.fetch)){ showErr("请用手机自带浏览器打开本链接。"); return; }
     var discovers=FILE_SOURCES.map(fromFile).concat(DOH_TXT.map(fromDoh));
     unionOf(discovers, 3500).then(function(domains){
-      allDomains=domains;
       tipEl.textContent="正在选择最快线路…";
-      tryNext(prober(domains));
+      anyOf(domains.map(probe)).then(function(best){ redirect(best); }, function(){ redirect(domains[0]); });
     }, function(){ showErr("线路都在维护中，请稍后重试，或用浏览器重新打开本链接。"); });
-    // 迟迟没打开：先把线路列出来让用户可以自己点，自动换线继续进行。
-    setTimeout(function(){ if(!stopped&&wxEl.style.display!=="block") showLines(); }, LINES_AFTER);
+    setTimeout(function(){ if(loadingEl.style.display!=="none"&&wxEl.style.display!=="block") showErr(); }, 15000);
   }
   run();
 })();
